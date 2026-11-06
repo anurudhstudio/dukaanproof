@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>Confirm your khata</title>
+    <style>
+      body { margin: 0; padding: 24px; background: #f5f7f2; color: #1d2922; font-family: Arial, sans-serif; }
+      .card { max-width: 440px; margin: 10vh auto; padding: 26px; border-radius: 18px; background: white; box-shadow: 0 6px 24px #152b1c15; }
+      h1 { color: #236b4a; font-size: 24px; }
+      .muted { color: #6e7a72; }
+      .amount { margin: 16px 0; color: #236b4a; font-size: 34px; font-weight: 800; }
+      .button { width: 100%; margin-top: 12px; padding: 15px; border: 0; border-radius: 12px; background: #236b4a; color: white; font-size: 16px; font-weight: 700; }
+      .secondary { background: #e4f0e8; color: #236b4a; }
+      button:disabled { opacity: .55; }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1 id="shop">DukaanProof</h1>
+      <p class="muted">Please check this ledger entry</p>
+      <p><b>Customer:</b> <span id="customer"></span></p>
+      <p id="amount" class="amount"></p>
+      <p><b>Created:</b> <span id="created"></span></p>
+      <p id="due-row" hidden><b>Due:</b> <span id="due"></span></p>
+      <p id="confirmed-row" hidden><b>Confirmed:</b> <span id="confirmed"></span></p>
+      <p><b>Entry:</b> <span id="kind"></span></p>
+      <p id="note-row" hidden><b>Details:</b> <span id="note"></span></p>
+      <p id="result">Loading confirmation details…</p>
+      <section id="actions" hidden>
+        <button id="confirm-button" class="button">Haan confirm</button>
+        <button id="dispute-button" class="button secondary">I want to discuss</button>
+      </section>
+    </main>
+    <script>
+      const token = new URLSearchParams(location.search).get('token');
+      const supabaseUrl = 'https://sdjaafgtzrkggjwnbkwi.supabase.co';
+      const endpoint = `${supabaseUrl}/functions/v1/create-confirm-link`;
+      const result = document.getElementById('result');
+      const actions = document.getElementById('actions');
+      let anonKey;
+
+      function formatDate(value, includeTime = false) {
+        if (!value) return '';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '';
+        const options = includeTime
+          ? { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }
+          : { day: '2-digit', month: 'short', year: 'numeric' };
+        return new Intl.DateTimeFormat('en-IN', options).format(date);
+      }
+
+      async function respond(confirmed) {
+        const buttons = actions.querySelectorAll('button');
+        buttons.forEach((button) => { button.disabled = true; });
+        try {
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', apikey: anonKey },
+            body: JSON.stringify({ token, confirmed }),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Could not save your response.');
+          result.textContent = confirmed
+            ? 'Thank you. Your confirmation has been recorded.'
+            : 'Your request to discuss this entry has been recorded.';
+          actions.hidden = true;
+        } catch (error) {
+          result.textContent = error.message || 'Could not save your response. Please try again.';
+          buttons.forEach((button) => { button.disabled = false; });
+        }
+      }
+
+      async function loadConfirmation() {
+        if (!token || token.length < 32 || token.length > 128) {
+          throw new Error('Invalid confirmation link.');
+        }
+        const response = await fetch(`${endpoint}?token=${encodeURIComponent(token)}`);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'This confirmation link is invalid or expired.');
+
+        const transaction = data.transaction;
+        anonKey = data.anon_key;
+        document.getElementById('shop').textContent = transaction.shop_name;
+        document.getElementById('customer').textContent = transaction.customer_name;
+        document.getElementById('amount').textContent = `₹${Number(transaction.amount).toLocaleString('en-IN')}`;
+        document.getElementById('created').textContent = formatDate(transaction.created_at, true);
+        document.getElementById('kind').textContent = transaction.kind === 'credit' ? 'Credit / udhaar' : 'Payment received';
+        if (transaction.due_at) {
+          document.getElementById('due').textContent = formatDate(transaction.due_at);
+          document.getElementById('due-row').hidden = false;
+        }
+        if (transaction.confirmed_at) {
+          document.getElementById('confirmed').textContent = formatDate(transaction.confirmed_at, true);
+          document.getElementById('confirmed-row').hidden = false;
+        }
+        if (transaction.note) {
+          document.getElementById('note').textContent = transaction.note;
+          document.getElementById('note-row').hidden = false;
+        }
+
+        if (transaction.status === 'confirmed') {
+          result.textContent = `This transaction has already been confirmed on ${formatDate(transaction.confirmed_at, true)}.`;
+        } else if (transaction.status === 'disputed') {
+          result.textContent = `You have already asked to discuss this transaction on ${formatDate(transaction.confirmed_at, true)}.`;
+        } else if (transaction.status === 'paid') {
+          result.textContent = 'This transaction is marked as paid.';
+        } else {
+          result.textContent = '';
+          actions.hidden = false;
+        }
+      }
+
+      document.getElementById('confirm-button').addEventListener('click', () => respond(true));
+      document.getElementById('dispute-button').addEventListener('click', () => respond(false));
+      loadConfirmation().catch((error) => { result.textContent = error.message || 'Confirmation service is unavailable.'; });
+    </script>
+  </body>
+</html>
